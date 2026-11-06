@@ -35,6 +35,25 @@ async fn main() -> anyhow::Result<()> {
     let api = std::sync::Arc::new(client());
     match command.as_str() {
         "watch" => watch(&api, &argument).await?,
+        "video" => {
+            let target = std::env::args().nth(3).unwrap_or_else(|| "video.mp4".into());
+            let (video, mut stream) = api.open_video(&argument, 1080).await?;
+            println!(
+                "itag {} {}x{} {}fps {} kbps, {} bytes",
+                video.format.itag,
+                video.width,
+                video.height,
+                video.fps,
+                video.format.bitrate / 1000,
+                stream.total().unwrap_or_default()
+            );
+            let mut body = Vec::new();
+            while let Some(chunk) = stream.chunk().await? {
+                body.extend_from_slice(&chunk);
+            }
+            std::fs::write(&target, &body)?;
+            println!("wrote {} bytes to {target}", body.len());
+        }
         "search" => {
             for track in api.search_songs(&argument).await? {
                 println!(

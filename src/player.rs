@@ -388,7 +388,7 @@ impl YtMusic {
         Ok((chosen, solver))
     }
 
-    async fn guest_player(&self, video_id: &str) -> Result<Value> {
+    pub(crate) async fn guest_player(&self, video_id: &str) -> Result<Value> {
         let response = self.guest_request(video_id, None).await?;
         if playability(&response).status != "LOGIN_REQUIRED" {
             return Ok(response);
@@ -668,7 +668,7 @@ fn set_params(url: &mut reqwest::Url, changes: &[(&str, &str)]) {
     query.finish();
 }
 
-fn playable<'a>(response: &'a Value, video_id: &str) -> Result<&'a Vec<Value>> {
+pub(crate) fn playable<'a>(response: &'a Value, video_id: &str) -> Result<&'a Vec<Value>> {
     let playability = playability(response);
     if !playability.ok() {
         let refused = format!(

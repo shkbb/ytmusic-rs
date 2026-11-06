@@ -15,6 +15,7 @@ pub mod search;
 pub mod stats;
 pub mod stream;
 pub mod util;
+pub mod video;
 
 pub use client::YtMusic;
 pub use context::Client;
@@ -23,3 +24,4 @@ pub use player::SignInRequired;
 pub use potoken::Minter;
 pub use stats::{Tracking, Watched};
 pub use stream::AudioStream;
+pub use video::VideoFormat;
