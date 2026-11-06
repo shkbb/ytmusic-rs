@@ -391,6 +391,48 @@ impl YtMusic {
         Ok(())
     }
 
+    /// Sends one of the watch reports a [`Tracking`](crate::Tracking) url builds, as the signed-in
+    /// YouTube Music page sends it: from `music.youtube.com`, with the session's cookies. The
+    /// stats host answers 204 to a report it takes. Fails for a guest, whose plays belong to
+    /// no account.
+    pub async fn send_stats(&self, url: &str) -> Result<()> {
+        let authed = self
+            .authed
+            .as_ref()
+            .context("the session is not signed in")?;
+        let origin = "https://music.youtube.com";
+        let url = crate::stats::on_music_host(url);
+        let mut request = authed
+            .http
+            .get(&url)
+            .header("Accept", "*/*")
+            .header("Origin", origin)
+            .header("Referer", COOKIE_ORIGIN)
+            .header("User-Agent", Client::Music.user_agent())
+            .header("X-Goog-AuthUser", self.authuser.to_string());
+        if let Some(authorization) = authed.authorization(origin) {
+            request = request
+                .header("Authorization", authorization)
+                .header("X-Origin", origin);
+        }
+        if let Some(page) = &self.page_id {
+            request = request.header("X-Goog-PageId", page);
+        }
+        let response = request
+            .send()
+            .await
+            .context("cannot reach the stats host")?;
+        let status = response.status();
+        if response.headers().contains_key(SET_COOKIE) {
+            authed.save();
+        }
+        log::debug!("stats: {status} for {}", crate::stats::kind(&url));
+        if !status.is_success() {
+            bail!("the stats host refused the report with status {status}");
+        }
+        Ok(())
+    }
+
     pub fn is_cookie_auth(&self) -> bool {
         self.authed.is_some()
     }

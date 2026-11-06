@@ -12,6 +12,7 @@ pub mod player;
 pub mod potoken;
 pub mod radio;
 pub mod search;
+pub mod stats;
 pub mod stream;
 pub mod util;
 
@@ -20,4 +21,5 @@ pub use context::Client;
 pub use models::*;
 pub use player::SignInRequired;
 pub use potoken::Minter;
+pub use stats::{Tracking, Watched};
 pub use stream::AudioStream;

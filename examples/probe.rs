@@ -13,6 +13,10 @@ fn client() -> YtMusic {
 }
 
 fn session() -> YtMusic {
+    if let Some(path) = std::env::var_os("YTMUSIC_COOKIE_STORE") {
+        eprintln!("probe: using the saved cookie store");
+        return YtMusic::with_cookies("").persist_cookies(PathBuf::from(path));
+    }
     if let Some(path) = std::env::var_os("YTMUSIC_COOKIES")
         && let Ok(cookies) = std::fs::read_to_string(path)
     {
@@ -30,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
     let argument = std::env::args().nth(2).unwrap_or_default();
     let api = std::sync::Arc::new(client());
     match command.as_str() {
+        "watch" => watch(&api, &argument).await?,
         "search" => {
             for track in api.search_songs(&argument).await? {
                 println!(
@@ -502,4 +507,30 @@ fn truncate(text: &str, max: usize) -> String {
         true => text.chars().take(max - 1).collect::<String>() + "…",
         false => text.to_string(),
     }
+}
+
+/// Plays `video_id` for forty seconds as far as YouTube can tell, sending the reports the
+/// YouTube Music page sends, so the play can be looked for in the account's history.
+async fn watch(api: &YtMusic, video_id: &str) -> anyhow::Result<()> {
+    let tracking = api.playback_tracking(video_id).await?;
+    println!("watching {video_id} as cpn {}", tracking.cpn());
+    let begun = std::time::Instant::now();
+    api.send_stats(&tracking.started(0., 0.)?).await?;
+    println!("playback report accepted");
+    let mut from = 0.;
+    for (step, until) in [10., 20., 30., 40.].into_iter().enumerate() {
+        tokio::time::sleep(std::time::Duration::from_secs_f64(until - from)).await;
+        let last = step == 3;
+        let url = tracking.watched(&ytmusic::Watched {
+            heard: &[(from, until)],
+            position: until,
+            elapsed: begun.elapsed().as_secs_f64(),
+            paused: last,
+            last,
+        })?;
+        api.send_stats(&url).await?;
+        println!("watchtime report {from}..{until} accepted");
+        from = until;
+    }
+    Ok(())
 }
