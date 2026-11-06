@@ -37,7 +37,10 @@ async fn main() -> anyhow::Result<()> {
         "watch" => watch(&api, &argument).await?,
         "video" => {
             let target = std::env::args().nth(3).unwrap_or_else(|| "video.mp4".into());
-            let (video, mut stream) = api.open_video(&argument, 1080).await?;
+            let Some((video, mut stream)) = api.open_video(&argument, 1080).await? else {
+                println!("{argument} has no picture of its own");
+                return Ok(());
+            };
             println!(
                 "itag {} {}x{} {}fps {} kbps, {} bytes",
                 video.format.itag,

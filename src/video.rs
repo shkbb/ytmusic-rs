@@ -27,13 +27,16 @@ pub struct VideoFormat {
 
 impl YtMusic {
     /// The H.264 picture of `video_id` no taller than `max_height`, or its smallest one when
-    /// every stream is taller, already arriving. Fails for a song with no video of its own,
-    /// such as an album track, which YouTube serves as a still image.
+    /// every stream is taller, already arriving. `None` for a song with no video of its own,
+    /// such as an album track, whose picture YouTube serves as a still of its cover.
     pub async fn open_video(
         self: &Arc<Self>,
         video_id: &str,
         max_height: u32,
-    ) -> Result<(VideoFormat, AudioStream)> {
+    ) -> Result<Option<(VideoFormat, AudioStream)>> {
+        if !self.is_music_video(video_id).await? {
+            return Ok(None);
+        }
         let response = self.guest_player(video_id).await?;
         let offered: Vec<VideoFormat> = crate::player::playable(&response, video_id)?
             .iter()
@@ -53,7 +56,31 @@ impl YtMusic {
         let stream = AudioStream::open(self.http.clone(), &chosen.format)
             .await
             .with_context(|| format!("itag {} is not being served", chosen.format.itag))?;
-        Ok((chosen, stream))
+        Ok(Some((chosen, stream)))
+    }
+
+    /// Whether `video_id` is a video with a picture of its own: an official music video or an
+    /// upload, rather than an album track. Only the YouTube Music player says which, and it
+    /// says so even to a guest it will not stream to.
+    pub async fn is_music_video(&self, video_id: &str) -> Result<bool> {
+        let response = self
+            .execute_with(
+                "player",
+                Client::Music,
+                serde_json::json!({
+                    "videoId": video_id,
+                    "contentCheckOk": true,
+                    "racyCheckOk": true,
+                }),
+                false,
+            )
+            .await?;
+        let kind = response
+            .pointer("/videoDetails/musicVideoType")
+            .and_then(Value::as_str)
+            .unwrap_or("MUSIC_VIDEO_TYPE_ATV");
+        log::debug!("video: {video_id} is {kind}");
+        Ok(kind != "MUSIC_VIDEO_TYPE_ATV")
     }
 }
 
