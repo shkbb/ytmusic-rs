@@ -148,7 +148,11 @@ impl YtMusic {
             .and_then(Value::as_str)
             .unwrap_or("UNKNOWN");
         if status != "OK" {
-            bail!("youtube will not play {video_id} to this account ({status})");
+            let reason = response
+                .pointer("/playabilityStatus/reason")
+                .and_then(Value::as_str)
+                .unwrap_or("no reason given");
+            bail!("youtube will not play {video_id} to this account ({status}: {reason})");
         }
         let url = |key: &str| {
             response

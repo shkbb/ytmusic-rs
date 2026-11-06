@@ -240,6 +240,7 @@ impl YtMusic {
         if let Some(authed) = authed
             && response.headers().contains_key(SET_COOKIE)
         {
+            trace_cookies(endpoint, response.headers());
             authed.save();
         }
         let body = response
@@ -381,6 +382,7 @@ impl YtMusic {
             .context("cannot reach the cookie rotation endpoint")?;
         let status = response.status();
         let rotated = response.headers().get_all(SET_COOKIE).iter().count();
+        trace_cookies("RotateCookies", response.headers());
         log::debug!("ytmusic: RotateCookies: {status}, {rotated} cookies set");
         if rotated > 0 {
             authed.save();
@@ -424,6 +426,7 @@ impl YtMusic {
             .context("cannot reach the stats host")?;
         let status = response.status();
         if response.headers().contains_key(SET_COOKIE) {
+            trace_cookies(crate::stats::kind(&url), response.headers());
             authed.save();
         }
         log::debug!("stats: {status} for {}", crate::stats::kind(&url));
@@ -839,4 +842,27 @@ mod tests {
         assert!(auth.starts_with("SAPISIDHASH "));
         assert_eq!(auth.split('_').nth(1).map(str::len), Some(40));
     }
+}
+
+/// Logs which cookies a response sets or clears, by name only, so a session that stops working
+/// can be traced to the response that changed it.
+fn trace_cookies(source: &str, headers: &reqwest::header::HeaderMap) {
+    let mut set = Vec::new();
+    let mut cleared = Vec::new();
+    for value in headers.get_all(SET_COOKIE) {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        let name = value.split('=').next().unwrap_or_default().trim().to_string();
+        let lower = value.to_ascii_lowercase();
+        match lower.contains("max-age=0") || lower.contains("expires=thu, 01 jan 1970") {
+            true => cleared.push(name),
+            false => set.push(name),
+        }
+    }
+    log::debug!(
+        "cookies: {source} set [{}] cleared [{}]",
+        set.join(", "),
+        cleared.join(", ")
+    );
 }
