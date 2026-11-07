@@ -50,6 +50,9 @@ pub struct YtMusic {
     solver: RwLock<Option<std::sync::Arc<crate::deobf::Solver>>>,
     player_cache: Option<PathBuf>,
     authed: Option<Authed>,
+    /// Whether the last signed-in answer still counted the session as signed in, so the
+    /// moment Google stops doing so is logged once, with the request that found it.
+    signed_in: std::sync::atomic::AtomicBool,
     authuser: usize,
     page_id: Option<String>,
     pub(crate) resolve_cache: crate::dedup::ResolveCache,
@@ -108,6 +111,7 @@ impl YtMusic {
             solver: RwLock::new(None),
             player_cache: None,
             authed: None,
+            signed_in: std::sync::atomic::AtomicBool::new(true),
             authuser: 0,
             page_id: None,
             resolve_cache: crate::dedup::ResolveCache::memory(),
@@ -269,6 +273,9 @@ impl YtMusic {
         }
         if !status.is_success() {
             bail!("{endpoint} failed with status {status}");
+        }
+        if authed.is_some() {
+            self.watch_session(endpoint, &value);
         }
         Ok(value)
     }
@@ -434,6 +441,32 @@ impl YtMusic {
             bail!("the stats host refused the report with status {status}");
         }
         Ok(())
+    }
+
+    /// Logs the request at which Google stopped, or started again, to count a signed-in
+    /// session as signed in, read from the `logged_in` flag every answer carries.
+    fn watch_session(&self, endpoint: &str, answer: &Value) {
+        let flag = answer
+            .pointer("/responseContext/serviceTrackingParams")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|service| service.get("params").and_then(Value::as_array))
+            .flatten()
+            .find(|param| param.get("key").and_then(Value::as_str) == Some("logged_in"))
+            .and_then(|param| param.get("value").and_then(Value::as_str));
+        let Some(flag) = flag else {
+            return;
+        };
+        let now = flag == "1";
+        let was = self
+            .signed_in
+            .swap(now, std::sync::atomic::Ordering::Relaxed);
+        match (was, now) {
+            (true, false) => log::warn!("session: {endpoint} answered as signed out"),
+            (false, true) => log::warn!("session: {endpoint} answered as signed in again"),
+            _ => {}
+        }
     }
 
     pub fn is_cookie_auth(&self) -> bool {
