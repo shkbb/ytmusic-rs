@@ -448,6 +448,11 @@ impl YtMusic {
         self.authuser
     }
 
+    /// The brand account page the session acts as, when it acts as one.
+    pub fn page_id(&self) -> Option<&str> {
+        self.page_id.as_deref()
+    }
+
     pub fn client(&self) -> &reqwest::Client {
         &self.http
     }

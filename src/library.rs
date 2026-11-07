@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use serde_json::{Value, json};
 
 use crate::browse::MAX_PAGES;
@@ -179,17 +179,39 @@ impl YtMusic {
         let response = self
             .execute("account/account_menu", Client::Music, json!({}))
             .await?;
-        let Some(account) = parse::find_renderer(&response, "activeAccountHeaderRenderer") else {
-            log::debug!(
-                "profile: account_menu has no active account, response: {}",
-                snippet(&response)
-            );
-            anyhow::bail!("account menu has no active account");
-        };
-        log::debug!("profile: activeAccountHeaderRenderer: {account}");
-        Ok(profile(account))
+        if let Some(account) = parse::find_renderer(&response, "activeAccountHeaderRenderer") {
+            log::debug!("profile: activeAccountHeaderRenderer: {account}");
+            return Ok(profile(account));
+        }
+        log::debug!(
+            "profile: account_menu has no active account, response: {}",
+            snippet(&response)
+        );
+        // Some signed-in accounts get a menu with no account header at all. The account
+        // switcher, which a sign-in reads, still names them.
+        let found = self.switcher().await;
+        found
+            .iter()
+            .find(|identity| identity.page_id.as_deref() == self.page_id())
+            .or(found.first())
+            .map(|identity| identity.profile.clone())
+            .context("account menu has no active account")
     }
+
     pub async fn identities(&self) -> Result<Vec<Identity>> {
+        let found = self.switcher().await;
+        if !found.is_empty() {
+            return Ok(found);
+        }
+        Ok(vec![Identity {
+            profile: self.profile().await?,
+            page_id: None,
+        }])
+    }
+
+    /// The accounts the account switcher names for this session, none when it names none or
+    /// does not answer.
+    async fn switcher(&self) -> Vec<Identity> {
         let response = self
             .execute(
                 "account/accounts_list",
@@ -213,19 +235,15 @@ impl YtMusic {
             self.authuser(),
             found.len()
         );
-        if !found.is_empty() {
-            return Ok(found);
-        }
-        if let Ok(response) = &response {
+        if found.is_empty()
+            && let Ok(response) = &response
+        {
             log::debug!(
                 "identities: the switcher named no account, response: {}",
                 snippet(response)
             );
         }
-        Ok(vec![Identity {
-            profile: self.profile().await?,
-            page_id: None,
-        }])
+        found
     }
 
     async fn profile_from_accounts(&self) -> Result<Profile> {
