@@ -243,9 +243,16 @@ impl YtMusic {
         let editable =
             parse::find_renderer(&response, "musicEditablePlaylistDetailHeaderRenderer").is_some();
         let privacy = privacy_of(&response);
-        let header = parse::find_renderer(&response, "musicResponsiveHeaderRenderer")
+        let Some(header) = parse::find_renderer(&response, "musicResponsiveHeaderRenderer")
             .or_else(|| parse::find_renderer(&response, "musicDetailHeaderRenderer"))
-            .context("playlist response has no header")?;
+        else {
+            let body = response.to_string();
+            log::warn!(
+                "browse: {browse_id} came back without a header: {}",
+                &body[..body.len().min(1800)]
+            );
+            anyhow::bail!("playlist response has no header");
+        };
         let title = header.run_text(&["title"]).unwrap_or_default();
         let author = match editable {
             true => None,
