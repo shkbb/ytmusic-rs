@@ -5,7 +5,7 @@ use crate::client::YtMusic;
 use crate::context::Client;
 use crate::models::{
     Album, AlbumDetail, AlbumKind, AlbumRef, Artist, ArtistRef, Playlist, PlaylistDetail,
-    PlaylistPage, Track,
+    PlaylistPage, Thumbnail, Track,
 };
 use crate::nav::Nav as _;
 use crate::parse;
@@ -139,10 +139,20 @@ impl YtMusic {
         }
         let mut albums = Vec::new();
         let mut singles = Vec::new();
+        let mut videos = Vec::new();
         for carousel in parse::find_renderers(&response, "musicCarouselShelfRenderer") {
             let label = carousel
                 .run_text(&["header", "musicCarouselShelfBasicHeaderRenderer", "title"])
                 .unwrap_or_default();
+            if label == "Videos" {
+                videos.extend(
+                    carousel
+                        .items(&["contents"])
+                        .iter()
+                        .filter_map(parse::two_row_video),
+                );
+                continue;
+            }
             let bucket = match label.as_str() {
                 "Albums" => &mut albums,
                 "Singles" | "Singles & EPs" | "Singles and EPs" => &mut singles,
@@ -160,12 +170,19 @@ impl YtMusic {
         };
         credit(&mut albums, &own);
         credit(&mut singles, &own);
+        // A channel that uploads videos rather than releases music has no Songs shelf, so its
+        // videos are what it plays.
+        if top_tracks.is_empty() {
+            top_tracks = videos;
+        }
+        let (thumbnails, banner) = portrait(&response, header);
         Ok(Artist {
             browse_id: browse_id.to_string(),
             name,
             description,
             subscribers,
-            thumbnails: parse::thumbnails(header),
+            thumbnails,
+            banner,
             top_tracks,
             songs,
             albums,
@@ -398,3 +415,36 @@ fn songs_playlist(shelf: &Value) -> Option<String> {
     let browse_id = endpoint.str_at(&["browseId"])?;
     Some(browse_id.strip_prefix("VL")?.to_string())
 }
+
+/// An artist's square portrait and wide banner. A music artist's page carries only the banner,
+/// and YouTube Music draws the portrait by asking the same picture of Google's image server
+/// as a square, which the server answers with the portrait it keeps for it. A channel's page
+/// carries its portrait apart, in front of the banner.
+fn portrait(response: &Value, header: &Value) -> (Vec<Thumbnail>, Vec<Thumbnail>) {
+    let banner = parse::thumbnails(header.at(&["thumbnail"]).unwrap_or(header));
+    if parse::find_renderer(response, "musicImmersiveHeaderRenderer").is_none() {
+        let face = header
+            .at(&["foregroundThumbnail"])
+            .map(parse::thumbnails)
+            .filter(|face| !face.is_empty());
+        return match face {
+            Some(face) => (face, banner),
+            None => (banner, Vec::new()),
+        };
+    }
+    let square = banner
+        .last()
+        .and_then(|largest| {
+            let (base, _) = largest.url.rsplit_once('=')?;
+            Some(vec![Thumbnail {
+                url: format!("{base}=w{PORTRAIT}-h{PORTRAIT}-l90-rj"),
+                width: PORTRAIT,
+                height: PORTRAIT,
+            }])
+        })
+        .unwrap_or_default();
+    (square, banner)
+}
+
+/// The side a portrait is asked for at, which is what YouTube Music's own pages ask for.
+const PORTRAIT: u32 = 544;

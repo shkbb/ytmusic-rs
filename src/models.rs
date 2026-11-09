@@ -107,7 +107,11 @@ pub struct Artist {
     pub name: String,
     pub description: Option<String>,
     pub subscribers: Option<String>,
+    /// The square portrait, as YouTube Music draws it in search and in the library.
     pub thumbnails: Vec<Thumbnail>,
+    /// The wide picture across the top of the page, when the page has one.
+    #[serde(default)]
+    pub banner: Vec<Thumbnail>,
     pub top_tracks: Vec<Track>,
     /// The ranked playlist linked by the top songs shelf. YouTube limits its length, and
     /// pages without a linked playlist leave this absent.

@@ -245,6 +245,36 @@ fn panel_kind(renderer: &Value) -> TrackKind {
     }
 }
 
+/// A video in a carousel, such as the Videos shelf of a channel page, as a track. The subtitle
+/// names the uploader and the view count.
+pub fn two_row_video(item: &Value) -> Option<Track> {
+    let renderer = item.at(&["musicTwoRowItemRenderer"]).unwrap_or(item);
+    let video_id = renderer
+        .str_at(&["navigationEndpoint", "watchEndpoint", "videoId"])?
+        .to_string();
+    let title = renderer.run_text(&["title"])?;
+    let subtitle_runs = renderer.runs(&["subtitle"]);
+    let views = subtitle_runs
+        .iter()
+        .filter_map(|run| run.str_at(&["text"]))
+        .find(|text| text.contains("view"))
+        .map(str::to_string);
+    Some(Track {
+        video_id: Some(video_id),
+        title,
+        artists: subtitle_artists(subtitle_runs),
+        album: None,
+        duration: None,
+        thumbnails: thumbnails(renderer),
+        explicit: false,
+        available: true,
+        kind: TrackKind::Video,
+        set_video_id: None,
+        liked: None,
+        views,
+    })
+}
+
 pub fn two_row_album(item: &Value) -> Option<Album> {
     let renderer = item.at(&["musicTwoRowItemRenderer"]).unwrap_or(item);
     let browse_id = renderer
