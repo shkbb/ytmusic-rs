@@ -11,6 +11,7 @@ pub const SONGS: &str = "EgWKAQIIAQ%3D%3D";
 pub const ALBUMS: &str = "EgWKAQIYAQ%3D%3D";
 pub const ARTISTS: &str = "EgWKAQIgAQ%3D%3D";
 pub const PLAYLISTS: &str = "EgWKAQIoAQ%3D%3D";
+pub const VIDEOS: &str = "EgWKAQIQAQ%3D%3D";
 
 impl YtMusic {
     pub async fn search_songs(&self, query: &str) -> Result<Vec<Track>> {
@@ -37,6 +38,28 @@ impl YtMusic {
             }
         }
         Ok(tracks)
+    }
+
+    /// The videos YouTube finds for `query`: music videos and uploads alike.
+    pub async fn search_videos(&self, query: &str) -> Result<Vec<Track>> {
+        let response = self
+            .execute(
+                "search",
+                Client::Music,
+                json!({ "query": query, "params": VIDEOS }),
+            )
+            .await?;
+        let mut videos = Vec::new();
+        for shelf in parse::find_renderers(&response, "musicShelfRenderer") {
+            for item in shelf.items(&["contents"]) {
+                if let Some(track) = parse::list_item_track(item)
+                    && track.video_id.is_some()
+                {
+                    videos.push(track);
+                }
+            }
+        }
+        Ok(videos)
     }
 
     pub async fn search_albums(&self, query: &str) -> Result<Vec<Album>> {
