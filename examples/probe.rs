@@ -35,8 +35,11 @@ async fn main() -> anyhow::Result<()> {
     let api = std::sync::Arc::new(client());
     match command.as_str() {
         "watch" => watch(&api, &argument).await?,
+        "counterpart" => println!("{:?}", api.counterpart(&argument).await?),
         "video" => {
-            let target = std::env::args().nth(3).unwrap_or_else(|| "video.mp4".into());
+            let target = std::env::args()
+                .nth(3)
+                .unwrap_or_else(|| "video.mp4".into());
             let Some((video, mut stream)) = api.open_video(&argument, 1080).await? else {
                 println!("{argument} has no picture of its own");
                 return Ok(());
@@ -308,6 +311,7 @@ async fn main() -> anyhow::Result<()> {
                 serde_json::from_str(&std::env::args().nth(3).unwrap_or_else(|| "{}".into()))?;
             let client = match std::env::var("CLIENT").unwrap_or_default().as_str() {
                 "tv" => ytmusic::Client::Tv,
+                "web" => ytmusic::Client::Web,
                 "visionos" => ytmusic::Client::VisionOs,
                 _ => ytmusic::Client::Music,
             };

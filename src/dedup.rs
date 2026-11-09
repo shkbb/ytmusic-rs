@@ -136,7 +136,7 @@ fn group_key(track: &Track) -> String {
     format!("{title}|{}", artists.join(","))
 }
 
-fn normalize_title(title: &str) -> String {
+pub(crate) fn normalize_title(title: &str) -> String {
     let mut cleaned = String::with_capacity(title.len());
     let mut depth = 0u32;
     let mut segment = String::new();
@@ -163,7 +163,7 @@ fn normalize_title(title: &str) -> String {
     normalize(&cleaned)
 }
 
-fn normalize(text: &str) -> String {
+pub(crate) fn normalize(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut space = false;
     for ch in text.chars() {

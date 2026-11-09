@@ -202,7 +202,8 @@ impl YtMusic {
         body.as_object_mut()
             .context("payload must be an object")?
             .insert("context".to_string(), context);
-        if client == Client::Music {
+        // The music player answers with sound alone unless a request asks for the picture too.
+        if client == Client::Music && body.get("isAudioOnly").is_none() {
             body["isAudioOnly"] = json!(true);
         }
         let (base, origin) = match client {
@@ -467,6 +468,23 @@ impl YtMusic {
             (false, true) => log::warn!("session: {endpoint} answered as signed in again"),
             _ => {}
         }
+    }
+
+    /// Replaces the signed-in session's cookies with `header`, the `Cookie` header of a
+    /// browser that renewed the session, and saves them. Does nothing for a guest.
+    pub fn adopt_cookies(&self, header: &str) {
+        let Some(authed) = self.authed.as_ref() else {
+            return;
+        };
+        *authed.store() = seed(header);
+        authed.save();
+        self.signed_in
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the last signed-in answer still counted the session as signed in.
+    pub fn signed_in(&self) -> bool {
+        self.signed_in.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn is_cookie_auth(&self) -> bool {
@@ -845,6 +863,34 @@ fn sid_hash(timestamp: u64, secret: &str, origin: &str) -> String {
     format!("{timestamp}_{hex}")
 }
 
+/// Logs which cookies a response sets or clears, by name only, so a session that stops working
+/// can be traced to the response that changed it.
+fn trace_cookies(source: &str, headers: &reqwest::header::HeaderMap) {
+    let mut set = Vec::new();
+    let mut cleared = Vec::new();
+    for value in headers.get_all(SET_COOKIE) {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        let name = value
+            .split('=')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let lower = value.to_ascii_lowercase();
+        match lower.contains("max-age=0") || lower.contains("expires=thu, 01 jan 1970") {
+            true => cleared.push(name),
+            false => set.push(name),
+        }
+    }
+    log::debug!(
+        "cookies: {source} set [{}] cleared [{}]",
+        set.join(", "),
+        cleared.join(", ")
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -880,27 +926,4 @@ mod tests {
         assert!(auth.starts_with("SAPISIDHASH "));
         assert_eq!(auth.split('_').nth(1).map(str::len), Some(40));
     }
-}
-
-/// Logs which cookies a response sets or clears, by name only, so a session that stops working
-/// can be traced to the response that changed it.
-fn trace_cookies(source: &str, headers: &reqwest::header::HeaderMap) {
-    let mut set = Vec::new();
-    let mut cleared = Vec::new();
-    for value in headers.get_all(SET_COOKIE) {
-        let Ok(value) = value.to_str() else {
-            continue;
-        };
-        let name = value.split('=').next().unwrap_or_default().trim().to_string();
-        let lower = value.to_ascii_lowercase();
-        match lower.contains("max-age=0") || lower.contains("expires=thu, 01 jan 1970") {
-            true => cleared.push(name),
-            false => set.push(name),
-        }
-    }
-    log::debug!(
-        "cookies: {source} set [{}] cleared [{}]",
-        set.join(", "),
-        cleared.join(", ")
-    );
 }

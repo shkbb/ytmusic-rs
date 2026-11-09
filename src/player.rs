@@ -24,6 +24,10 @@ impl std::fmt::Display for SignInRequired {
 
 impl std::error::Error for SignInRequired {}
 
+/// The H.264 pictures a music video is offered in, from 144p to 1080p at 60 fps. A renewal of
+/// one of these asks the player for the picture rather than the sound alone.
+pub(crate) const H264: [u32; 10] = [160, 133, 134, 135, 136, 137, 298, 299, 264, 266];
+
 /// The streams only a Premium account is offered: 256 kbps AAC and Opus.
 const PREMIUM: [u32; 2] = [141, 774];
 
@@ -35,9 +39,12 @@ struct EmbedPage {
 
 /// Which of a client's deciphered streams to take.
 #[derive(Clone, Copy, Debug)]
-enum Choice {
+pub(crate) enum Choice {
     /// Exactly this itag, as when a stream already playing needs a fresh url.
     Itag(u32),
+    /// The tallest H.264 picture at or below this many lines, or the shortest when every one
+    /// is taller, for a music video.
+    Picture(u32),
     /// The best of the [`PREMIUM`] streams, and none when the account is offered none.
     Premium,
     /// The best stream at or below this many bits per second, as [`choose`] picks it.
@@ -82,6 +89,12 @@ impl YtMusic {
     /// The proof-of-origin token the signed-in client puts on the stream url of `video_id`,
     /// bound as [`stream_binding`](YtMusic::stream_binding) says. Empty when the binding cannot
     /// be worked out, since a token for the wrong identity is worse than none.
+    /// The minted proof-of-origin token for a signed-in stream of `video_id`, empty when none
+    /// can be minted.
+    pub(crate) async fn signed_token(&self, video_id: &str) -> String {
+        self.po_token(video_id).await
+    }
+
     async fn po_token(&self, video_id: &str) -> String {
         let Some(binding) = self.stream_binding(video_id).await else {
             log::warn!("potoken: no session binding, the stream goes out without a token");
@@ -318,7 +331,7 @@ impl YtMusic {
     /// Asks `client` for the streams of `video_id` and picks one as `choice` says. The signed-in
     /// client is asked with the session's cookies and the embedded player as a guest. Neither
     /// player request carries a token, as yt-dlp sends none for either client.
-    async fn ciphered_streams(
+    pub(crate) async fn ciphered_streams(
         &self,
         video_id: &str,
         client: Client,
@@ -343,6 +356,14 @@ impl YtMusic {
                 }
             },
         });
+        let picture = match choice {
+            Choice::Picture(_) => true,
+            Choice::Itag(itag) => H264.contains(&itag),
+            _ => false,
+        };
+        if picture {
+            payload["isAudioOnly"] = json!(false);
+        }
         let mut visitor = None;
         if client == Client::Embedded {
             match self.embed_page(video_id).await {
@@ -358,10 +379,10 @@ impl YtMusic {
         let response = self
             .execute_visiting("player", client, payload, signed_in, visitor.as_deref())
             .await?;
-        let audio: Vec<Ciphered> = playable(&response, video_id)?
+        let (pictures, audio): (Vec<Ciphered>, Vec<Ciphered>) = playable(&response, video_id)?
             .iter()
             .filter_map(ciphered)
-            .collect();
+            .partition(|format| format.mime.starts_with("video/"));
         log::debug!(
             "player: {} offers {video_id} as {}",
             client.name(),
@@ -370,8 +391,25 @@ impl YtMusic {
         let chosen = match choice {
             Choice::Itag(itag) => audio
                 .into_iter()
+                .chain(pictures)
                 .find(|format| format.itag == itag)
                 .with_context(|| format!("itag {itag} is no longer offered for {video_id}"))?,
+            Choice::Picture(max_height) => {
+                let h264 = pictures.into_iter().filter(|format| {
+                    format.mime.starts_with("video/mp4") && format.codec.starts_with("avc1")
+                });
+                let (within, above): (Vec<_>, Vec<_>) =
+                    h264.partition(|format| format.height <= max_height);
+                match within.is_empty() {
+                    true => above.into_iter().min_by_key(|format| format.height),
+                    false => within
+                        .into_iter()
+                        .max_by_key(|format| (format.height, format.fps)),
+                }
+                .with_context(|| {
+                    format!("{} offers no h.264 picture of {video_id}", client.name())
+                })?
+            }
             Choice::Premium => {
                 let premium = audio
                     .into_iter()
@@ -512,8 +550,8 @@ async fn range(
     Ok(chunk.to_vec())
 }
 
-struct Ciphered {
-    itag: u32,
+pub(crate) struct Ciphered {
+    pub(crate) itag: u32,
     mime: String,
     codec: String,
     bitrate: u32,
@@ -522,11 +560,15 @@ struct Ciphered {
     loudness_db: Option<f32>,
     url: String,
     signature: Option<(String, String)>,
+    /// The picture's size and rate, all zero for a sound-only stream.
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) fps: u32,
 }
 
 impl Ciphered {
     /// The playable format once `url` is the deciphered url, fetched as `client` would.
-    fn into_format(self, url: String, client: Client) -> AudioFormat {
+    pub(crate) fn into_format(self, url: String, client: Client) -> AudioFormat {
         AudioFormat {
             itag: self.itag,
             url,
@@ -542,7 +584,7 @@ impl Ciphered {
 }
 
 /// The signed-in client's playable format for `chosen`, deciphered and with `token` on its url.
-async fn signed(
+pub(crate) async fn signed(
     chosen: Ciphered,
     solver: &crate::deobf::Solver,
     token: &str,
@@ -553,7 +595,7 @@ async fn signed(
 
 fn ciphered(format: &Value) -> Option<Ciphered> {
     let mime = format.get("mimeType").and_then(Value::as_str)?;
-    if !mime.starts_with("audio/") {
+    if !mime.starts_with("audio/") && !mime.starts_with("video/") {
         return None;
     }
     let (url, signature) = match format.get("signatureCipher").and_then(Value::as_str) {
@@ -590,10 +632,13 @@ fn ciphered(format: &Value) -> Option<Ciphered> {
             .map(|db| db as f32),
         url,
         signature,
+        width: format.get("width").and_then(Value::as_u64).unwrap_or(0) as u32,
+        height: format.get("height").and_then(Value::as_u64).unwrap_or(0) as u32,
+        fps: format.get("fps").and_then(Value::as_u64).unwrap_or(0) as u32,
     })
 }
 
-async fn decipher(solver: &crate::deobf::Solver, format: &Ciphered) -> Result<String> {
+pub(crate) async fn decipher(solver: &crate::deobf::Solver, format: &Ciphered) -> Result<String> {
     let mut url = reqwest::Url::parse(&format.url).context("the stream url does not parse")?;
     let throttle = param(&url, "n");
     let signature = format.signature.as_ref().map(|(_, sig)| sig.as_str());
