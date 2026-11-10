@@ -93,6 +93,14 @@ impl AudioStream {
         self
     }
 
+    /// Moves the stream to `offset`, so the next chunk starts there. The range in flight is
+    /// let go, which is how a reader that knows the file's index jumps to the part it needs.
+    pub fn seek(&mut self, offset: u64) {
+        self.offset = offset;
+        self.response = None;
+        self.failures = 0;
+    }
+
     /// The length of the body, when the player response gave one.
     pub fn total(&self) -> Option<u64> {
         self.total
